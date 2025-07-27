@@ -374,12 +374,12 @@
             <!-- Section: Image Analyzer -->
             <section id="image-analyzer" class="content-section hidden space-y-6">
                 <div class="section-card">
-                    <h2 class="text-2xl font-bold text-stone-900 mb-2">✨ Analisis Tren Visual dengan Gemini</h2>
-                    <p class="text-stone-600">Punya gambar referensi yang sukses atau sedang tren? Unggah di sini. Gemini akan menganalisisnya dan memberikan rincian mendalam tentang subjek, komposisi, gaya, dan kata kunci potensial untuk membantu Anda membuat karya serupa yang berkualitas.</p>
+                    <h2 class="text-2xl font-bold text-stone-900 mb-2">✨ Analisis Tren Visual dengan AI</h2>
+                    <p class="text-stone-600">Punya gambar referensi yang sukses atau sedang tren? Unggah di sini. AI akan menganalisisnya dan memberikan rincian mendalam tentang subjek, komposisi, gaya, dan kata kunci potensial untuk membantu Anda membuat karya serupa yang berkualitas.</p>
                 </div>
                 <div class="section-card">
                     <div class="mb-4 p-3 bg-blue-50 border border-blue-200 text-blue-800 text-xs rounded-md">
-                        Fitur ini memerlukan kunci API Google Gemini Anda. Masukkan kunci API Anda di tab "Generator Prompt" untuk mengaktifkan tombol analisis.
+                        Fitur ini memerlukan kunci API Anda. Masukkan kunci API Anda di tab "Generator Prompt" untuk mengaktifkan tombol analisis. Semua provider AI (OpenAI, Claude, Gemini) mendukung analisis gambar.
                     </div>
                     <div class="grid grid-cols-1 md:grid-cols-2 gap-6 items-start">
                         <div>
@@ -861,6 +861,8 @@
 
             analyzeImageBtn.addEventListener('click', async () => {
                 const apiKey = document.getElementById('api-key').value;
+                const provider = document.getElementById('api-provider').value;
+                
                 if (!apiKey) {
                     alert('Silakan masukkan kunci API Anda di tab "Generator Prompt" untuk menggunakan fitur ini.');
                     return;
@@ -878,27 +880,82 @@
                 const systemPrompt = `You are a world-class microstock image analyst. Analyze the provided image and give a detailed breakdown for a contributor who wants to create similar high-quality stock images. Provide your analysis in structured markdown. The analysis must include these sections: **Subjek Utama & Aksi**, **Komposisi & Framing**, **Pencahayaan & Warna**, **Gaya & Mood**, and **Saran Kata Kunci (Keywords)**. Be specific and provide actionable insights.`;
 
                 try {
-                    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${apiKey}`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
+                    let response, requestUrl, requestHeaders, requestBody;
+                    
+                    if (provider === 'openai') {
+                        requestUrl = 'https://api.openai.com/v1/chat/completions';
+                        requestHeaders = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` };
+                        requestBody = JSON.stringify({
+                            model: 'gpt-4o',
+                            messages: [{
+                                role: 'user',
+                                content: [
+                                    { type: 'text', text: systemPrompt },
+                                    { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${base64Image}` } }
+                                ]
+                            }],
+                            max_tokens: 1000
+                        });
+                    } else if (provider === 'claude') {
+                        requestUrl = 'https://api.anthropic.com/v1/messages';
+                        requestHeaders = { 
+                            'x-api-key': apiKey, 
+                            'Content-Type': 'application/json', 
+                            'anthropic-version': '2023-06-01' 
+                        };
+                        requestBody = JSON.stringify({
+                            model: 'claude-3-sonnet-20240229',
+                            max_tokens: 1000,
+                            messages: [{
+                                role: 'user',
+                                content: [
+                                    { type: 'text', text: systemPrompt },
+                                    { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: base64Image } }
+                                ]
+                            }]
+                        });
+                    } else { // gemini
+                        requestUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${apiKey}`;
+                        requestHeaders = { 'Content-Type': 'application/json' };
+                        requestBody = JSON.stringify({
                             contents: [{
                                 parts: [
                                     { text: systemPrompt },
                                     { inline_data: { mime_type: "image/jpeg", data: base64Image } }
                                 ]
                             }]
-                        })
+                        });
+                    }
+                    
+                    response = await fetch(requestUrl, {
+                        method: 'POST',
+                        headers: requestHeaders,
+                        body: requestBody
                     });
+                    
                     if (!response.ok) {
                         const errorData = await response.text();
                         throw new Error(`API error: ${response.status} ${response.statusText} - ${errorData}`);
                     }
                     const data = await response.json();
-                    if (!data.candidates || !data.candidates[0] || !data.candidates[0].content || !data.candidates[0].content.parts || !data.candidates[0].content.parts[0]) {
-                        throw new Error('Respons API tidak valid atau kosong');
+                    
+                    let analysisText;
+                    if (provider === 'openai') {
+                        if (!data.choices || !data.choices[0] || !data.choices[0].message) {
+                            throw new Error('Respons OpenAI tidak valid atau kosong');
+                        }
+                        analysisText = data.choices[0].message.content;
+                    } else if (provider === 'claude') {
+                        if (!data.content || !data.content[0] || !data.content[0].text) {
+                            throw new Error('Respons Claude tidak valid atau kosong');
+                        }
+                        analysisText = data.content[0].text;
+                    } else { // gemini
+                        if (!data.candidates || !data.candidates[0] || !data.candidates[0].content || !data.candidates[0].content.parts || !data.candidates[0].content.parts[0]) {
+                            throw new Error('Respons Gemini tidak valid atau kosong');
+                        }
+                        analysisText = data.candidates[0].content.parts[0].text;
                     }
-                    let analysisText = data.candidates[0].content.parts[0].text;
                     
                     // Simple markdown to HTML conversion
                     analysisText = analysisText
@@ -986,11 +1043,22 @@
                 if (!section) return;
 
                 const apiKey = document.getElementById('api-key').value;
+                const provider = document.getElementById('api-provider').value;
+                
+                // Get provider-specific information
+                const providerInfo = {
+                    openai: { name: 'OpenAI GPT-4o', keyName: 'OpenAI API key' },
+                    claude: { name: 'Claude 3 Sonnet', keyName: 'Anthropic Claude API key' },
+                    gemini: { name: 'Gemini 1.5 Flash', keyName: 'Google Gemini API key' }
+                };
+                
+                const currentProvider = providerInfo[provider] || providerInfo.gemini;
+                
                 const noApiKeyHtml = `
                     <div class="section-card">
                         <div class="p-4 bg-blue-50 border-l-4 border-blue-400 text-blue-800">
                             <h4 class="font-bold text-lg mb-3">🔑 API Key Diperlukan untuk Konten Dinamis</h4>
-                            <p class="mb-4">Bagian ini menggunakan AI (Gemini) untuk menghasilkan konten yang selalu up-to-date dan relevan dengan tren pasar terkini.</p>
+                            <p class="mb-4">Bagian ini menggunakan AI (${currentProvider.name}) untuk menghasilkan konten yang selalu up-to-date dan relevan dengan tren pasar terkini.</p>
                             <div class="space-y-3">
                                 <div class="flex items-start space-x-2">
                                     <span class="font-semibold text-blue-700">1.</span>
@@ -998,7 +1066,7 @@
                                 </div>
                                 <div class="flex items-start space-x-2">
                                     <span class="font-semibold text-blue-700">2.</span>
-                                    <p>Masukkan Google Gemini API key Anda di kolom yang tersedia</p>
+                                    <p>Masukkan ${currentProvider.keyName} Anda di kolom yang tersedia</p>
                                 </div>
                                 <div class="flex items-start space-x-2">
                                     <span class="font-semibold text-blue-700">3.</span>
@@ -1074,6 +1142,21 @@
                     if (themeIconElement) themeIconElement.textContent = '🌙';
                     localStorage.setItem('theme', 'light');
                 }
+            }
+            
+            // Add provider change listener to refresh dynamic content
+            const apiProviderSelect = document.getElementById('api-provider');
+            if (apiProviderSelect) {
+                apiProviderSelect.addEventListener('change', () => {
+                    // Refresh any currently loaded dynamic content sections
+                    const currentSection = document.querySelector('.content-section.active');
+                    if (currentSection) {
+                        const sectionId = currentSection.id;
+                        if (sectionId === 'how-to-use') {
+                            reloadSection(sectionId);
+                        }
+                    }
+                });
             }
             
             // Load saved theme
